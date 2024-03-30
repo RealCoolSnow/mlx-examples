@@ -3,9 +3,30 @@ from typing import Dict
 
 import mlx.core as mx
 import mlx.nn as nn
+import mlx.optimizers as opt
 from mlx.utils import tree_unflatten
 
 from .lora import LoRALinear
+
+
+def build_schedule(schedule_config: Dict):
+    """
+    Build a learning rate schedule from the given config.
+    """
+    schedule_fn = getattr(opt.schedulers, schedule_config["name"])
+    arguments = schedule_config["arguments"]
+    initial_lr = arguments[0]
+    bound_schedule_fn = schedule_fn(*arguments)
+    if warmup_steps := schedule_config.get("warmup", 0):
+        warmup_init = schedule_config.get("warmup_init", 0.0)
+        warmup_fn = opt.schedulers.linear_schedule(
+            warmup_init, initial_lr, warmup_steps
+        )
+        return opt.schedulers.join_schedules(
+            [warmup_fn, bound_schedule_fn], [warmup_steps + 1]
+        )
+    else:
+        return bound_schedule_fn
 
 
 def linear_to_lora_layers(
@@ -60,6 +81,8 @@ def linear_to_lora_layers(
         keys = set(["att_proj"])
     elif model.model_type == "phi-msft":
         keys = set(["mixer.Wqkv", "moe.gate"])
+    elif model.model_type == "dbrx":
+        keys = set(["norm_attn_norm.attn.Wqkv", "ffn.router.layer"])
     else:
         raise ValueError(f"Lora does not support {model.model_type}")
 
